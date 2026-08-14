@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:voice": "node server/voice-server.mjs",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -12,7 +13,10 @@
     "@vitejs/plugin-react": "latest",
     "vite": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "dotenv": "latest",
+    "express": "latest",
+    "twilio": "latest"
   },
   "devDependencies": {}
 }

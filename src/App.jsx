@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 const stages = ['Intake', 'Diagnose', 'Resolve', 'Document']
 
@@ -51,11 +51,45 @@ function App() {
   const [stage, setStage] = useState(1)
   const [approved, setApproved] = useState(false)
   const [notice, setNotice] = useState('')
+  const [demoCall, setDemoCall] = useState({ status: 'idle', callSid: '', error: '' })
+  const [phoneTranscript, setPhoneTranscript] = useState([])
+
+  useEffect(() => {
+    if (!demoCall.callSid) return undefined
+    const refresh = async () => {
+      const response = await fetch(`/api/voice/session/${demoCall.callSid}`)
+      if (!response.ok) return
+      const session = await response.json()
+      setPhoneTranscript(session.transcript || [])
+      setDemoCall((current) => ({ ...current, status: session.status || current.status }))
+    }
+    refresh()
+    const timer = window.setInterval(refresh, 1500)
+    return () => window.clearInterval(timer)
+  }, [demoCall.callSid])
 
   const showNotice = (message) => {
     setNotice(message)
     window.setTimeout(() => setNotice(''), 2600)
   }
+
+  const startDemoCall = async () => {
+    setPhoneTranscript([])
+    setDemoCall({ status: 'starting', callSid: '', error: '' })
+    try {
+      const response = await fetch('/api/voice/call', { method: 'POST' })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Unable to start the call')
+      setDemoCall({ status: data.status || 'queued', callSid: data.callSid, error: '' })
+      showNotice('Demo call started — your verified phone should ring shortly')
+    } catch (error) {
+      setDemoCall({ status: 'error', callSid: '', error: error.message })
+    }
+  }
+
+  const visibleTranscript = phoneTranscript.length
+    ? phoneTranscript.map((line, index) => ({ ...line, time: `LIVE ${String(index + 1).padStart(2, '0')}` }))
+    : transcript
 
   return (
     <div className="app-shell">
@@ -79,8 +113,13 @@ function App() {
             <div className="stage-track">
               {stages.map((item, index) => <button key={item} className={index <= stage ? 'complete' : ''} onClick={() => setStage(index)}><span>{index < stage ? <Icon name="check" size={13}/> : index + 1}</span>{item}</button>)}
             </div>
-            <button className="end-call" onClick={() => showNotice('Simulation call ended and draft case saved')}>End call</button>
+            <div className="demo-call-actions">
+              <button className="start-call" onClick={startDemoCall} disabled={demoCall.status === 'starting'}><Icon name="phone" size={15}/>{demoCall.status === 'starting' ? 'Calling…' : 'Call my phone'}</button>
+              <button className="end-call" onClick={() => showNotice('Simulation call ended and draft case saved')}>End call</button>
+            </div>
           </section>
+
+          {demoCall.error && <div className="call-error"><Icon name="shield" size={16}/><span><strong>Phone demo needs configuration.</strong> {demoCall.error}</span></div>}
 
           <section className="workspace-grid">
             <aside className="context-column">
@@ -116,7 +155,7 @@ function App() {
             <section className="conversation-column panel">
               <div className="panel-title conversation-title"><div><span>Live conversation</span><small>English (US) · Consent captured</small></div><div className="listening"><span/> Listening</div></div>
               <div className="transcript" aria-live="polite">
-                {transcript.map((line, index) => (
+                {visibleTranscript.map((line, index) => (
                   <article className={`utterance ${line.speaker.toLowerCase()}`} key={index}>
                     <div className="speaker-dot">{line.speaker === 'Customer' ? 'AR' : line.speaker === 'Engineer' ? 'JM' : <Icon name="spark" size={14}/>}</div>
                     <div><div className="utterance-meta"><strong>{line.speaker}</strong><span>{line.time}</span></div><p>{line.text}</p></div>
