@@ -1,5 +1,7 @@
 # TechConnect Context Copilot
 
+**[Open the credential-free live demo](https://darlock7.github.io/RA_AI_Hackathon/)**
+
 Customer-focused support-call concept for Rockwell Automation TechConnect. The interface combines natural-language intake, installed-asset context, grounded troubleshooting, human review, and organizational learning.
 
 ## Three-minute engineering review
