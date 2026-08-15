@@ -2,6 +2,7 @@ import 'dotenv/config'
 import express from 'express'
 import twilio from 'twilio'
 import { demoScript } from './demo-script.mjs'
+import { analyzeContext, buildSummary, selectNextQuestion } from './context-engine.mjs'
 
 const app = express()
 const port = Number(process.env.VOICE_SERVER_PORT || 8787)
@@ -75,29 +76,21 @@ app.post('/api/voice/respond', (req, res) => {
   const confidence = Number(req.body.Confidence || 0)
 
   if (!speech) {
-    const retryPrompt = step === 0 ? 'I did not hear a response. Please briefly describe the problem on the line.' : demoScript.questions[step - 1]?.fallback
+    const retryPrompt = step === 0 ? 'I did not hear a response. Please briefly describe the problem on the line.' : session.nextQuestion?.prompt
     sayAndListen(response, retryPrompt || 'Please repeat your response.', step)
     return xml(res, response)
   }
 
   session.transcript.push({ speaker: 'Customer', text: speech, confidence })
+  session.context = analyzeContext(session.transcript)
+  session.nextQuestion = selectNextQuestion(session.context)
+  session.summary = buildSummary(session)
 
-  if (step < demoScript.questions.length) {
-    const prompt = demoScript.questions[step].prompt
+  if (session.nextQuestion.id !== 'complete' && step < 6) {
+    const prompt = `Thank you. ${session.nextQuestion.prompt}`
     session.transcript.push({ speaker: 'Copilot', text: prompt })
     sayAndListen(response, prompt, step + 1)
     return xml(res, response)
-  }
-
-  const answers = session.transcript.filter((item) => item.speaker === 'Customer').map((item) => item.text)
-  session.summary = {
-    priority: 'P1 — Production stopped',
-    product: 'ControlLogix 5580 · Packaging Line 4',
-    customerStatement: answers[0] || 'Not captured',
-    fault: answers[1] || 'Not captured',
-    trigger: answers[2] || 'Not captured',
-    safetyConfirmation: answers[3] || 'Not captured',
-    nextAction: 'Route to Control Systems support with transcript and grounded evidence.',
   }
   session.transcript.push({ speaker: 'Copilot', text: demoScript.completion })
   response.say({ voice: 'Polly.Joanna-Neural', language: 'en-US' }, demoScript.completion)
@@ -122,4 +115,3 @@ app.listen(port, () => {
   console.log(`Voice demo server listening on http://localhost:${port}`)
   if (missing.length) console.log(`Configuration needed: ${missing.join(', ')}`)
 })
-

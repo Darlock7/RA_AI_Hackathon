@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "demo": "vite",
     "dev:voice": "node server/voice-server.mjs",
     "build": "vite build",
     "preview": "vite preview"

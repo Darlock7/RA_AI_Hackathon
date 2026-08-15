@@ -2,6 +2,17 @@
 
 Customer-focused support-call concept for Rockwell Automation TechConnect. The interface combines natural-language intake, installed-asset context, grounded troubleshooting, human review, and organizational learning.
 
+## Three-minute engineering review
+
+```sh
+npm install
+npm run demo
+```
+
+Open the printed local URL, select **Demo lab**, choose a scenario, and select **Run guided demo**. This credential-free path exercises context extraction, next-best-question selection, safety gating, diagnostic hypotheses, and the prepared engineer handoff. Twilio is optional.
+
+Available repeatable scenarios cover a power event, firmware update, project download, and an unconfirmed safety state. You can also type customer responses to inspect how the workflow adapts.
+
 ## Real phone demo
 
 The demo can place a real outbound call to a verified phone through Twilio. The voice flow listens to the caller, follows a repeatable four-answer support scenario, and streams the resulting transcript into the Live Assist screen.

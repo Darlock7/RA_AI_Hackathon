@@ -1,6 +1,26 @@
 import { useEffect, useState } from 'react'
+import { analyzeContext, buildSummary, selectNextQuestion } from '../server/context-engine.mjs'
 
 const stages = ['Intake', 'Diagnose', 'Resolve', 'Document']
+
+const demoScenarios = {
+  power: {
+    label: 'Power event',
+    answers: ['Our packaging line is completely down after a brief power dip.', 'The controller display says T01:C61.', 'The machine is safe and personnel are clear.', 'The OK indicator is flashing red.'],
+  },
+  firmware: {
+    label: 'Firmware update',
+    answers: ['The line is down after we updated the controller firmware.', 'The display shows T02:C14.', 'The machine is safe and personnel are clear.', 'The OK indicator is solid red.'],
+  },
+  download: {
+    label: 'Project download',
+    answers: ['Production stopped immediately after a project download.', 'The display shows T03:C22.', 'The machine is safe and everyone is clear.', 'The OK indicator is flashing red.'],
+  },
+  unsafe: {
+    label: 'Safety not confirmed',
+    answers: ['The line is down after a power outage.', 'The display says T01:C61.', 'The machine is not safe and personnel are nearby.'],
+  },
+}
 
 const transcript = [
   { speaker: 'Customer', time: '00:08', text: 'Our packaging line stopped about twelve minutes ago. The controller is showing a major fault and production is completely down.' },
@@ -53,6 +73,13 @@ function App() {
   const [notice, setNotice] = useState('')
   const [demoCall, setDemoCall] = useState({ status: 'idle', callSid: '', error: '' })
   const [phoneTranscript, setPhoneTranscript] = useState([])
+  const [caseSummary, setCaseSummary] = useState(null)
+  const [callContext, setCallContext] = useState(null)
+  const [nextQuestion, setNextQuestion] = useState(null)
+  const [demoPanel, setDemoPanel] = useState(false)
+  const [scenarioKey, setScenarioKey] = useState('power')
+  const [typedResponse, setTypedResponse] = useState('')
+  const [welcomeOpen, setWelcomeOpen] = useState(true)
 
   useEffect(() => {
     if (!demoCall.callSid) return undefined
@@ -61,6 +88,9 @@ function App() {
       if (!response.ok) return
       const session = await response.json()
       setPhoneTranscript(session.transcript || [])
+      setCaseSummary(session.summary || null)
+      setCallContext(session.context || null)
+      setNextQuestion(session.nextQuestion || null)
       setDemoCall((current) => ({ ...current, status: session.status || current.status }))
     }
     refresh()
@@ -87,12 +117,63 @@ function App() {
     }
   }
 
+  const updateDemoContext = (lines) => {
+    const context = analyzeContext(lines)
+    setPhoneTranscript(lines)
+    setCallContext(context)
+    setNextQuestion(selectNextQuestion(context))
+    setCaseSummary(buildSummary({ transcript: lines }))
+    setStage(context.safety === 'Not yet confirmed' ? 1 : 2)
+  }
+
+  const runGuidedDemo = () => {
+    const scenario = demoScenarios[scenarioKey]
+    const lines = []
+    scenario.answers.forEach((answer, index) => {
+      lines.push({ speaker: 'Customer', text: answer })
+      const context = analyzeContext(lines)
+      const question = selectNextQuestion(context)
+      if (index < scenario.answers.length - 1) lines.push({ speaker: 'Copilot', text: question.prompt })
+    })
+    updateDemoContext(lines)
+    showNotice(`${scenario.label} scenario loaded — no credentials required`)
+  }
+
+  const submitTypedResponse = (event) => {
+    event.preventDefault()
+    const answer = typedResponse.trim()
+    if (!answer) return
+    const existing = phoneTranscript.length ? phoneTranscript : []
+    const withAnswer = [...existing, { speaker: 'Customer', text: answer }]
+    const question = selectNextQuestion(analyzeContext(withAnswer))
+    const lines = question.id === 'complete' ? withAnswer : [...withAnswer, { speaker: 'Copilot', text: question.prompt }]
+    updateDemoContext(lines)
+    setTypedResponse('')
+  }
+
   const visibleTranscript = phoneTranscript.length
     ? phoneTranscript.map((line, index) => ({ ...line, time: `LIVE ${String(index + 1).padStart(2, '0')}` }))
     : transcript
 
+  const handoff = caseSummary || {
+    priority: 'P1 — Production stopped',
+    product: 'ControlLogix 5580 · Packaging Line 4',
+    customerStatement: 'Packaging line stopped after a brief power dip. Controller reports a major fault.',
+    fault: 'T01:C61',
+    trigger: 'Facility power event; no firmware update or project download reported.',
+    safetyConfirmation: 'Machine safe state must be reconfirmed before guidance.',
+    nextAction: 'Route to Control Systems support with transcript and grounded evidence.',
+  }
+
+  const openHandoff = () => {
+    setStage(3)
+    setView('handoff')
+    showNotice('Prepared case is ready for engineer handoff')
+  }
+
   return (
     <div className="app-shell">
+      {welcomeOpen && <div className="welcome-overlay"><section className="welcome-card"><div className="brand-mark"><Icon name="spark" size={24}/></div><span className="eyebrow">Rockwell Automation TechConnect concept</span><h1>See how one support call becomes an engineer-ready case.</h1><p>Run a credential-free scenario to watch the copilot extract context, choose the next question, enforce safety gates and prepare the handoff.</p><div className="welcome-flow"><span>Listen</span><i/><span>Understand</span><i/><span>Ground</span><i/><span>Handoff</span></div><div className="welcome-actions"><button className="primary" onClick={() => {setWelcomeOpen(false);setDemoPanel(true);window.setTimeout(runGuidedDemo,0)}}><Icon name="spark" size={16}/>Start guided demo</button><button className="secondary" onClick={() => setWelcomeOpen(false)}>Explore interface</button></div><small>Synthetic data only · No credentials or phone configuration required</small></section></div>}
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark"><Icon name="spark" size={21} /></div>
@@ -100,6 +181,7 @@ function App() {
         </div>
         <nav aria-label="Primary navigation">
           <button className={view === 'assist' ? 'active' : ''} onClick={() => setView('assist')}><Icon name="phone" />Live Assist</button>
+          <button className={view === 'handoff' ? 'active' : ''} onClick={() => setView('handoff')}><Icon name="check" />Case Handoff</button>
           <button className={view === 'insights' ? 'active' : ''} onClick={() => setView('insights')}><Icon name="grid" />Organization Insights</button>
         </nav>
         <div className="operator"><div className="avatar">JM</div><div><strong>Jordan Martinez</strong><span>Control Systems Support</span></div></div>
@@ -114,10 +196,19 @@ function App() {
               {stages.map((item, index) => <button key={item} className={index <= stage ? 'complete' : ''} onClick={() => setStage(index)}><span>{index < stage ? <Icon name="check" size={13}/> : index + 1}</span>{item}</button>)}
             </div>
             <div className="demo-call-actions">
+              <button className="demo-lab-button" onClick={() => setDemoPanel((open) => !open)}><Icon name="spark" size={15}/>Demo lab</button>
               <button className="start-call" onClick={startDemoCall} disabled={demoCall.status === 'starting'}><Icon name="phone" size={15}/>{demoCall.status === 'starting' ? 'Calling…' : 'Call my phone'}</button>
-              <button className="end-call" onClick={() => showNotice('Simulation call ended and draft case saved')}>End call</button>
+              <button className="end-call" onClick={openHandoff}>End call</button>
             </div>
           </section>
+
+          {demoPanel && <section className="demo-lab panel">
+            <div className="demo-lab-copy"><span className="eyebrow">Credential-free evaluation</span><strong>Test the context engine without Twilio.</strong><small>Choose a repeatable scenario or type the next customer response.</small></div>
+            <label>Scenario<select value={scenarioKey} onChange={(event) => setScenarioKey(event.target.value)}>{Object.entries(demoScenarios).map(([key,item]) => <option value={key} key={key}>{item.label}</option>)}</select></label>
+            <button className="guided-demo" onClick={runGuidedDemo}><Icon name="spark" size={15}/>Run guided demo</button>
+            <form onSubmit={submitTypedResponse}><input value={typedResponse} onChange={(event) => setTypedResponse(event.target.value)} placeholder="Type a customer response…"/><button type="submit">Send</button></form>
+            <button className="reset-demo" onClick={() => {setPhoneTranscript([]);setCallContext(null);setNextQuestion(null);setCaseSummary(null)}}>Reset</button>
+          </section>}
 
           {demoCall.error && <div className="call-error"><Icon name="shield" size={16}/><span><strong>Phone demo needs configuration.</strong> {demoCall.error}</span></div>}
 
@@ -146,9 +237,9 @@ function App() {
               <div className="panel extracted-card">
                 <div className="panel-title"><span>Call understanding</span><span className="ai-label"><Icon name="spark" size={13}/> AI extracted</span></div>
                 <div className="signal"><span>Intent</span><strong>Controller fault</strong></div>
-                <div className="signal"><span>Impact</span><strong className="critical">Production stopped</strong></div>
-                <div className="signal"><span>Fault</span><strong>T01:C61</strong></div>
-                <div className="signal"><span>Trigger</span><strong>Power event</strong></div>
+                <div className="signal"><span>Impact</span><strong className="critical">{callContext?.productionStopped === false ? 'Confirming' : 'Production stopped'}</strong></div>
+                <div className="signal"><span>Fault</span><strong>{callContext?.fault || 'T01:C61'}</strong></div>
+                <div className="signal"><span>Trigger</span><strong>{callContext?.trigger || 'Power event'}</strong></div>
               </div>
             </aside>
 
@@ -165,16 +256,17 @@ function App() {
               </div>
               <div className="next-question">
                 <div className="question-label"><Icon name="spark" size={15}/> Suggested next question <span>High information gain</span></div>
-                <p>“Before the power event, was the controller’s OK indicator solid green, and is it now solid red or flashing red?”</p>
+                <p>“{nextQuestion?.prompt || 'Before the power event, was the controller’s OK indicator solid green, and is it now solid red or flashing red?'}”</p>
+                {nextQuestion?.reason && <small className="question-reason">Why now: {nextQuestion.reason}</small>}
                 <div><button className="primary" onClick={() => showNotice('Question inserted into engineer notes')}><Icon name="check" size={15}/> Use question</button><button className="secondary" onClick={() => showNotice('Alternative question generated')}>Generate alternative</button></div>
               </div>
             </section>
 
             <aside className="copilot-column">
               <div className="panel diagnosis-card">
-                <div className="panel-title"><span>Diagnostic hypothesis</span><span className="confidence high">High confidence</span></div>
-                <h3>Power-cycle recovery fault</h3>
-                <p>The reported major fault and recent power dip are consistent with a recoverable startup condition, but controller state must be verified before any reset guidance.</p>
+                <div className="panel-title"><span>Diagnostic hypothesis</span><span className="confidence high">{callContext ? `${Math.round(callContext.confidence * 100)}% context` : 'High confidence'}</span></div>
+                <h3>{callContext?.hypothesis || 'Power-cycle recovery fault'}</h3>
+                <p>{callContext?.rationale || 'The reported major fault and recent power dip make controller state and fault-log timing the highest-value checks.'}</p>
                 <div className="guardrail"><Icon name="shield" size={17}/><div><strong>Safety gate active</strong><span>No reset or mode change will be suggested until indicator state and process safety are confirmed.</span></div></div>
               </div>
 
@@ -187,7 +279,56 @@ function App() {
                 <div className="panel-title"><span>Recommended action</span><span className="review-required">Engineer review required</span></div>
                 <ol><li>Confirm machine is in a safe state and process interlocks are satisfied.</li><li>Verify the controller OK indicator pattern and capture the full fault log.</li><li>Compare fault timestamp with the recorded facility power event.</li></ol>
                 <div className="recommend-actions"><button className="primary" onClick={() => {setApproved(true); showNotice('Recommendation approved for customer guidance')}}>{approved ? <><Icon name="check" size={15}/> Approved</> : 'Approve guidance'}</button><button className="secondary" onClick={() => showNotice('Recommendation opened for editing')}>Edit</button></div>
+                <button className="handoff-cta" onClick={openHandoff}>Prepare engineer handoff <Icon name="arrow" size={14}/></button>
               </div>
+            </aside>
+          </section>
+        </main>
+      ) : view === 'handoff' ? (
+        <main className="handoff-view">
+          <section className="handoff-heading">
+            <div><span className="eyebrow">Prepared case · TC-2026-08421</span><h1>The engineer starts with context, not questions.</h1><p>Customer, asset, evidence and safety information are assembled for review before transfer.</p></div>
+            <div className="handoff-actions"><button className="secondary" onClick={() => setView('assist')}>Back to call</button><button className="primary" onClick={() => showNotice('Case routed to Control Systems Support')}>Route to engineer <Icon name="arrow" size={14}/></button></div>
+          </section>
+          <section className="handoff-status">
+            <div><span>Priority</span><strong className="priority-value">{handoff.priority}</strong></div>
+            <div><span>Recommended queue</span><strong>Control Systems Support</strong></div>
+            <div><span>Entitlement</span><strong>System Support · 24×7</strong></div>
+            <div><span>Handoff readiness</span><strong className="ready-value"><Icon name="check" size={14}/> Ready for review</strong></div>
+          </section>
+          <section className="handoff-grid">
+            <div className="handoff-main">
+              <article className="panel case-brief">
+                <div className="panel-title"><span>Engineer brief</span><span className="ai-label"><Icon name="spark" size={13}/> AI prepared</span></div>
+                <div className="brief-hero"><div className="asset-monogram">CL</div><div><h2>{handoff.product}</h2><p>Meridian Packaging · Columbus, Ohio · Site 02</p></div></div>
+                <dl className="brief-grid">
+                  <div className="wide"><dt>Customer statement</dt><dd>{handoff.customerStatement}</dd></div>
+                  <div><dt>Fault captured</dt><dd>{handoff.fault}</dd></div>
+                  <div><dt>Likely trigger</dt><dd>{handoff.trigger}</dd></div>
+                  <div className="wide"><dt>Recommended next action</dt><dd>{handoff.nextAction}</dd></div>
+                  {handoff.hypothesis && <div className="wide"><dt>Working hypothesis</dt><dd>{handoff.hypothesis} · {handoff.confidence}% context completeness</dd></div>}
+                </dl>
+              </article>
+              <article className="panel handoff-transcript">
+                <div className="panel-title"><span>Call transcript</span><span>{visibleTranscript.length} captured turns</span></div>
+                <div className="compact-transcript">{visibleTranscript.map((line,index)=><div key={index}><strong>{line.speaker}</strong><p>{line.text}</p></div>)}</div>
+              </article>
+            </div>
+            <aside className="handoff-side">
+              <article className="panel safety-review">
+                <div className="panel-title"><span>Safety review</span><span className="review-required">Confirmation required</span></div>
+                <div className="safety-content"><Icon name="shield" size={24}/><div><strong>Human approval remains mandatory</strong><p>{handoff.safetyConfirmation}</p></div></div>
+                <label><input type="checkbox"/> Engineer reconfirmed safe state</label>
+                <label><input type="checkbox"/> Evidence reviewed before guidance</label>
+              </article>
+              <article className="panel handoff-evidence">
+                <div className="panel-title"><span>Grounding package</span><span>{evidence.length} sources</span></div>
+                {evidence.map(item=><div className="handoff-source" key={item.id}><Icon name="book" size={17}/><div><strong>{item.id}</strong><span>{item.title}</span></div><b>{item.match}</b></div>)}
+              </article>
+              <article className="panel unresolved-card">
+                <div className="panel-title"><span>Open item</span><span className="confidence">1 question</span></div>
+                <p>Confirm the controller OK-indicator pattern before any recovery guidance.</p>
+              </article>
             </aside>
           </section>
         </main>
